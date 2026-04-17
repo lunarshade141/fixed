@@ -1,5 +1,6 @@
 package com.naturalcam
 
+import android.graphics.ImageFormat
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.*
