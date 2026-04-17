@@ -2,7 +2,9 @@ package com.naturalcam
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.*
 import android.hardware.camera2.*
+import android.media.Image
 import android.media.ImageReader
 import android.os.*
 import android.util.Log
@@ -17,38 +19,33 @@ class CameraActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "NaturalCam"
-        private const val REQUEST_PERMISSIONS = 100
+        private const val REQ_PERMS = 100
     }
 
-    // Camera core
     private lateinit var cameraManager: CameraManager
     private var cameraDevice: CameraDevice? = null
-    private var captureSession: CameraCaptureSession? = null
-    private lateinit var cameraCharacteristics: CameraCharacteristics
+    private var session: CameraCaptureSession? = null
 
-    // Image pipelines
-    private var imageReaderJpeg: ImageReader? = null
-    private var imageReaderRaw: ImageReader? = null
+    private var jpegReader: ImageReader? = null
+    private var rawReader: ImageReader? = null
 
-    // Background thread
-    private var backgroundThread: HandlerThread? = null
-    private var backgroundHandler: Handler? = null
+    private lateinit var characteristics: CameraCharacteristics
 
-    // UI
+    private var bgThread: HandlerThread? = null
+    private var bgHandler: Handler? = null
+
     private lateinit var textureView: TextureView
     private lateinit var btnCapture: ImageButton
 
-    // Processor
-    private lateinit var naturalProcessor: NaturalImageProcessor
-
-    // IMPORTANT: store last capture metadata for DNG
-    private var lastCaptureResult: TotalCaptureResult? = null
+    private lateinit var processor: NaturalImageProcessor
 
     private var cameraId: String = ""
 
+    // 🔥 IMPORTANT BRIDGE (FIX FOR YOUR RAW ERROR)
+    private var latestResult: TotalCaptureResult? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         window.setFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
             WindowManager.LayoutParams.FLAG_FULLSCREEN
@@ -56,14 +53,20 @@ class CameraActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_camera)
 
+        processor = NaturalImageProcessor()
+        setupUI()
+
+        if (hasPermissions()) {
+            startThread()
+            if (textureView.isAvailable) openCamera()
+        } else {
+            requestPermissions()
+        }
+    }
+
+    private fun setupUI() {
         textureView = findViewById(R.id.textureView)
         btnCapture = findViewById(R.id.btnCapture)
-
-        naturalProcessor = NaturalImageProcessor()
-
-        btnCapture.setOnClickListener {
-            capturePhoto()
-        }
 
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, w: Int, h: Int) {
@@ -75,32 +78,28 @@ class CameraActivity : AppCompatActivity() {
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
         }
 
-        if (hasPermissions()) {
-            startBackgroundThread()
-        } else {
-            requestPermissions()
+        btnCapture.setOnClickListener {
+            capturePhoto()
         }
     }
 
-    // ---------------- CAMERA OPEN ----------------
+    // ========================= CAMERA =========================
 
     private fun openCamera() {
         cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
 
         for (id in cameraManager.cameraIdList) {
-            val chars = cameraManager.getCameraCharacteristics(id)
-            if (chars.get(CameraCharacteristics.LENS_FACING)
-                == CameraCharacteristics.LENS_FACING_BACK
+            val c = cameraManager.getCameraCharacteristics(id)
+            if (c.get(CameraCharacteristics.LENS_FACING) ==
+                CameraCharacteristics.LENS_FACING_BACK
             ) {
                 cameraId = id
-                cameraCharacteristics = chars
+                characteristics = c
                 break
             }
         }
 
-        if (cameraId.isEmpty()) return
-
-        val map = cameraCharacteristics.get(
+        val map = characteristics.get(
             CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
         ) ?: return
 
@@ -112,39 +111,41 @@ class CameraActivity : AppCompatActivity() {
             it.width * it.height
         }
 
-        imageReaderJpeg = ImageReader.newInstance(
+        jpegReader = ImageReader.newInstance(
             jpegSize.width,
             jpegSize.height,
             ImageFormat.JPEG,
             2
         )
 
-        imageReaderJpeg!!.setOnImageAvailableListener({ reader ->
+        jpegReader!!.setOnImageAvailableListener({ reader ->
             val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-            backgroundHandler?.post {
-                naturalProcessor.processAndSaveJpeg(image, this)
+
+            bgHandler?.post {
+                processor.processAndSaveJpeg(image, this)
                 image.close()
             }
-        }, backgroundHandler)
+        }, bgHandler)
 
         if (rawSize != null) {
-            imageReaderRaw = ImageReader.newInstance(
+            rawReader = ImageReader.newInstance(
                 rawSize.width,
                 rawSize.height,
                 ImageFormat.RAW_SENSOR,
                 2
             )
 
-            imageReaderRaw!!.setOnImageAvailableListener({ reader ->
+            rawReader!!.setOnImageAvailableListener({ reader ->
                 val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
 
-                val result = lastCaptureResult
+                val result = latestResult
+
                 if (result != null) {
-                    backgroundHandler?.post {
-                        naturalProcessor.saveRawDng(
+                    bgHandler?.post {
+                        processor.saveRawDng(
                             image,
                             result,
-                            cameraCharacteristics,
+                            characteristics,
                             this
                         )
                         image.close()
@@ -152,24 +153,13 @@ class CameraActivity : AppCompatActivity() {
                 } else {
                     image.close()
                 }
-            }, backgroundHandler)
+            }, bgHandler)
         }
-
-        val surfaceTexture = textureView.surfaceTexture ?: return
-        surfaceTexture.setDefaultBufferSize(1920, 1080)
-
-        val surface = Surface(surfaceTexture)
-
-        if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.CAMERA
-            ) != PackageManager.PERMISSION_GRANTED
-        ) return
 
         cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
             override fun onOpened(camera: CameraDevice) {
                 cameraDevice = camera
-                createSession(surface)
+                createSession()
             }
 
             override fun onDisconnected(camera: CameraDevice) {
@@ -179,102 +169,111 @@ class CameraActivity : AppCompatActivity() {
             override fun onError(camera: CameraDevice, error: Int) {
                 camera.close()
             }
-        }, backgroundHandler)
+        }, bgHandler)
     }
 
-    // ---------------- SESSION ----------------
+    private fun createSession() {
+        val surface = Surface(textureView.surfaceTexture)
 
-    private fun createSession(previewSurface: Surface) {
-        val device = cameraDevice ?: return
+        val targets = mutableListOf(surface, jpegReader!!.surface)
+        rawReader?.surface?.let { targets.add(it) }
 
-        val surfaces = mutableListOf(previewSurface)
-        imageReaderJpeg?.surface?.let { surfaces.add(it) }
-        imageReaderRaw?.surface?.let { surfaces.add(it) }
+        cameraDevice!!.createCaptureSession(targets,
+            object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(s: CameraCaptureSession) {
+                    session = s
+                    startPreview()
+                }
 
-        device.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
-            override fun onConfigured(session: CameraCaptureSession) {
-                captureSession = session
-                startPreview(previewSurface)
-            }
-
-            override fun onConfigureFailed(session: CameraCaptureSession) {}
-        }, backgroundHandler)
+                override fun onConfigureFailed(session: CameraCaptureSession) {}
+            }, bgHandler)
     }
 
-    private fun startPreview(surface: Surface) {
+    private fun startPreview() {
         val device = cameraDevice ?: return
-        val session = captureSession ?: return
+        val s = session ?: return
 
         val req = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-        req.addTarget(surface)
-
-        session.setRepeatingRequest(req.build(), captureCallback, backgroundHandler)
-    }
-
-    // ---------------- CAPTURE ----------------
-
-    private fun capturePhoto() {
-        val device = cameraDevice ?: return
-        val session = captureSession ?: return
-
-        val req = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
-
-        imageReaderJpeg?.surface?.let { req.addTarget(it) }
-        imageReaderRaw?.surface?.let { req.addTarget(it) }
+        req.addTarget(Surface(textureView.surfaceTexture))
 
         req.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
 
-        session.capture(req.build(), object : CameraCaptureSession.CaptureCallback() {
-            override fun onCaptureCompleted(
-                session: CameraCaptureSession,
-                request: CaptureRequest,
-                result: TotalCaptureResult
-            ) {
-                lastCaptureResult = result
-            }
-        }, backgroundHandler)
+        s.setRepeatingRequest(req.build(), captureCallback, bgHandler)
     }
 
-    // ---------------- CALLBACK ----------------
+    private fun capturePhoto() {
+        val device = cameraDevice ?: return
+        val s = session ?: return
 
-    private val captureCallback = object : CameraCaptureSession.CaptureCallback() {}
+        val req = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
 
-    // ---------------- THREAD ----------------
+        req.addTarget(jpegReader!!.surface)
+        rawReader?.surface?.let { req.addTarget(it) }
 
-    private fun startBackgroundThread() {
-        backgroundThread = HandlerThread("cam").also { it.start() }
-        backgroundHandler = Handler(backgroundThread!!.looper)
+        req.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+        req.set(CaptureRequest.JPEG_ORIENTATION, 90)
+
+        s.capture(req.build(), null, bgHandler)
     }
 
-    private fun stopBackgroundThread() {
-        backgroundThread?.quitSafely()
-        backgroundThread = null
-        backgroundHandler = null
+    // ========================= CALLBACK =========================
+
+    private val captureCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(
+            session: CameraCaptureSession,
+            request: CaptureRequest,
+            result: TotalCaptureResult
+        ) {
+            latestResult = result
+        }
     }
 
-    // ---------------- PERMISSIONS ----------------
+    // ========================= THREAD =========================
 
-    private fun hasPermissions() =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+    private fun startThread() {
+        bgThread = HandlerThread("cam").apply { start() }
+        bgHandler = Handler(bgThread!!.looper)
+    }
+
+    private fun stopThread() {
+        bgThread?.quitSafely()
+        bgThread?.join()
+    }
+
+    // ========================= PERMISSIONS =========================
+
+    private fun hasPermissions() = arrayOf(
+        Manifest.permission.CAMERA
+    ).all {
+        ContextCompat.checkSelfPermission(this, it) ==
                 PackageManager.PERMISSION_GRANTED
+    }
 
     private fun requestPermissions() {
-        ActivityCompat.requestPermissions(
-            this,
+        ActivityCompat.requestPermissions(this,
             arrayOf(Manifest.permission.CAMERA),
-            REQUEST_PERMISSIONS
+            REQ_PERMS
         )
     }
 
-    override fun onResume() {
-        super.onResume()
-        startBackgroundThread()
-        if (textureView.isAvailable) openCamera()
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_PERMS &&
+            grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        ) {
+            startThread()
+            openCamera()
+        }
     }
 
     override fun onPause() {
-        cameraDevice?.close()
-        stopBackgroundThread()
         super.onPause()
+        cameraDevice?.close()
+        stopThread()
     }
 }
