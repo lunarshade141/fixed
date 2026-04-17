@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Full screen viewfinder -->
+    <TextureView
+        android:id="@+id/textureView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Top bar: ISO and Shutter readout -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="horizontal"
+        android:paddingTop="48dp"
+        android:paddingHorizontal="24dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tvISO"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ISO AUTO"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:alpha="0.8" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/tvMode"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:text="A"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:gravity="center"
+            android:background="@drawable/mode_badge"
+            android:alpha="0.9" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/tvShutter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="1/60s"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:alpha="0.8" />
+    </LinearLayout>
+
+    <!-- Exposure compensation slider — vertical, right side -->
+    <SeekBar
+        android:id="@+id/seekExposure"
+        android:layout_width="180dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical|end"
+        android:layout_marginEnd="-60dp"
+        android:rotation="-90"
+        android:progressTint="#FFFFFF"
+        android:thumbTint="#FFFFFF"
+        android:alpha="0.7" />
+
+    <!-- Bottom controls -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:layout_gravity="bottom"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="16dp"
+        android:paddingHorizontal="32dp">
+
+        <!-- Flip camera -->
+        <ImageButton
+            android:id="@+id/btnFlip"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@android:drawable/ic_menu_rotate"
+            android:background="@drawable/circle_button"
+            android:tint="#FFFFFF"
+            android:contentDescription="Flip camera" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <!-- Shutter button — clean circle like iOS -->
+        <ImageButton
+            android:id="@+id/btnCapture"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/shutter_button"
+            android:contentDescription="Take photo" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <!-- Placeholder for gallery thumbnail -->
+        <View
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/circle_button" />
+
+    </LinearLayout>
+
+</FrameLayout>
