@@ -1,5 +1,6 @@
 package com.naturalcam
 
+import android.hardware.camera2.TotalCaptureResult
 import android.content.Context
 import android.graphics.*
 import android.hardware.camera2.CameraCharacteristics
@@ -88,7 +89,7 @@ class NaturalImageProcessor {
      * This is your "negative" — process later in Lightroom/Darktable
      */
     fun saveRawDng(image: Image,
-    result: android.hardware.camera2.CaptureResult,
+    result: android.hardware.camera2.TotalCaptureResult,
     characteristics: CameraCharacteristics,
     context: Context) {
         try {
